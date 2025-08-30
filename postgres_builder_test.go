@@ -16,12 +16,6 @@ func TestPostgresBuilderSuite(t *testing.T) {
 	suite.Run(t, new(postgresBuilderSuite))
 }
 
-type postgresBuilderSuite struct {
-	suite.Suite
-	ctx context.Context
-	db  *sql.DB
-}
-
 type dbConfig struct {
 	Database string
 	Username string
@@ -43,6 +37,13 @@ func parseTestConfig() dbConfig {
 	}
 }
 
+type postgresBuilderSuite struct {
+	suite.Suite
+	ctx     context.Context
+	db      *sql.DB
+	builder schema.Builder
+}
+
 func (s *postgresBuilderSuite) SetupSuite() {
 	s.ctx = context.Background()
 
@@ -57,7 +58,8 @@ func (s *postgresBuilderSuite) SetupSuite() {
 	s.Require().NoError(err)
 
 	s.db = db
-	schema.SetDebug(true)
+	s.builder, err = schema.NewBuilder("postgres")
+	s.Require().NoError(err)
 }
 
 func (s *postgresBuilderSuite) TearDownSuite() {
@@ -65,8 +67,7 @@ func (s *postgresBuilderSuite) TearDownSuite() {
 }
 
 func (s *postgresBuilderSuite) TestCreate() {
-	builder, err := schema.NewBuilder("postgres")
-	s.Require().NoError(err)
+	builder := s.builder
 	tx, err := s.db.BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
 	defer tx.Rollback() //nolint:errcheck
@@ -86,21 +87,21 @@ func (s *postgresBuilderSuite) TestCreate() {
 	s.Run("when all parameters are valid, should create table successfully", func() {
 		err = builder.Create(context.Background(), tx, "users", func(table *schema.Blueprint) {
 			table.ID()
-			table.String("name", 255)
-			table.String("email", 255).Unique()
-			table.String("password", 255).Nullable()
+			table.String("name")
+			table.String("email").Unique()
+			table.String("password").Nullable()
 			table.Timestamps()
 		})
 		s.NoError(err, "expected no error when creating table with valid parameters")
 	})
 	s.Run("when use custom schema should create it successfully", func() {
-		_, err = tx.Exec("CREATE SCHEMA IF NOT EXISTS custom_publics")
+		_, err = tx.Exec("CREATE SCHEMA IF NOT EXISTS custom_public")
 		s.NoError(err, "expected no error when creating custom schema")
-		err = builder.Create(context.Background(), tx, "custom_publics.users", func(table *schema.Blueprint) {
+		err = builder.Create(context.Background(), tx, "custom_public.users", func(table *schema.Blueprint) {
 			table.ID()
-			table.String("name", 255)
-			table.String("email", 255).Unique()
-			table.String("password", 255).Nullable()
+			table.String("name")
+			table.String("email").Unique()
+			table.String("password").Nullable()
 			table.TimestampsTz()
 		})
 		s.NoError(err, "expected no error when creating table with custom schema")
@@ -118,9 +119,9 @@ func (s *postgresBuilderSuite) TestCreate() {
 		err = builder.Create(context.Background(), tx, "orders", func(table *schema.Blueprint) {
 			table.ID()
 			table.BigInteger("user_id")
-			table.String("order_id", 255).Unique()
+			table.String("order_id").Unique()
 			table.Decimal("amount", 10, 2)
-			table.Timestamp("created_at").Default("CURRENT_TIMESTAMP")
+			table.Timestamp("created_at").UseCurrent()
 
 			table.Foreign("user_id").References("id").On("users").OnDelete("CASCADE").OnUpdate("CASCADE")
 		})
@@ -129,9 +130,9 @@ func (s *postgresBuilderSuite) TestCreate() {
 	s.Run("when have custom index should create it successfully", func() {
 		err = builder.Create(context.Background(), tx, "orders_2", func(table *schema.Blueprint) {
 			table.ID()
-			table.String("order_id", 255).Unique("uk_orders_2_order_id")
+			table.String("order_id").Unique("uk_orders_2_order_id")
 			table.Decimal("amount", 10, 2)
-			table.Timestamp("created_at").Default("CURRENT_TIMESTAMP")
+			table.Timestamp("created_at").UseCurrent()
 
 			table.Index("created_at").Name("idx_orders_created_at").Algorithm("BTREE")
 		})
@@ -140,56 +141,15 @@ func (s *postgresBuilderSuite) TestCreate() {
 	s.Run("when table already exists, should return error", func() {
 		err = builder.Create(context.Background(), tx, "users", func(table *schema.Blueprint) {
 			table.ID()
-			table.String("name", 255)
-			table.String("email", 255).Unique()
+			table.String("name")
+			table.String("email").Unique()
 		})
 		s.Error(err, "expected error when creating table that already exists")
 	})
 }
 
-func (s *postgresBuilderSuite) TestCreateIfNotExists() {
-	builder, err := schema.NewBuilder("postgres")
-	s.Require().NoError(err)
-	tx, err := s.db.BeginTx(s.ctx, nil)
-	s.Require().NoError(err)
-	defer tx.Rollback() //nolint:errcheck
-
-	s.Run("when tx is nil, should return error", func() {
-		err := builder.CreateIfNotExists(s.ctx, nil, "test_table", func(table *schema.Blueprint) {})
-		s.Error(err, "expected error when transaction is nil")
-	})
-	s.Run("when table name is empty, should return error", func() {
-		err := builder.CreateIfNotExists(s.ctx, tx, "", func(table *schema.Blueprint) {})
-		s.Error(err, "expected error when table name is empty")
-	})
-	s.Run("when blueprint is nil, should return error", func() {
-		err := builder.CreateIfNotExists(s.ctx, tx, "test_table", nil)
-		s.Error(err, "expected error when blueprint is nil")
-	})
-	s.Run("when all parameters are valid, should create table successfully", func() {
-		err = builder.CreateIfNotExists(s.ctx, tx, "users", func(table *schema.Blueprint) {
-			table.ID()
-			table.String("name", 255)
-			table.String("email", 255).Unique()
-			table.String("password", 255).Nullable()
-			table.Timestamp("created_at").Default("CURRENT_TIMESTAMP")
-			table.Timestamp("updated_at").Default("CURRENT_TIMESTAMP")
-		})
-		s.NoError(err, "expected no error when creating table with valid parameters")
-	})
-	s.Run("when table already exists, should not return error", func() {
-		err = builder.CreateIfNotExists(s.ctx, tx, "users", func(table *schema.Blueprint) {
-			table.ID()
-			table.String("name", 255)
-			table.String("email", 255)
-		})
-		s.NoError(err, "expected no error when creating table that already exists")
-	})
-}
-
 func (s *postgresBuilderSuite) TestDrop() {
-	builder, err := schema.NewBuilder("postgres")
-	s.Require().NoError(err)
+	builder := s.builder
 	tx, err := s.db.BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
 	defer tx.Rollback() //nolint:errcheck
@@ -201,11 +161,10 @@ func (s *postgresBuilderSuite) TestDrop() {
 	s.Run("when all parameters are valid, should drop table successfully", func() {
 		err = builder.Create(s.ctx, tx, "users", func(table *schema.Blueprint) {
 			table.ID()
-			table.String("name", 255)
-			table.String("email", 255).Unique()
-			table.String("password", 255).Nullable()
-			table.Timestamp("created_at").Default("CURRENT_TIMESTAMP")
-			table.Timestamp("updated_at").Default("CURRENT_TIMESTAMP")
+			table.String("name")
+			table.String("email").Unique()
+			table.String("password").Nullable()
+			table.Timestamps()
 		})
 		s.NoError(err, "expected no error when creating table before dropping it")
 		err = builder.Drop(s.ctx, tx, "users")
@@ -218,8 +177,7 @@ func (s *postgresBuilderSuite) TestDrop() {
 }
 
 func (s *postgresBuilderSuite) TestDropIfExists() {
-	builder, err := schema.NewBuilder("postgres")
-	s.Require().NoError(err)
+	builder := s.builder
 	tx, err := s.db.BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
 	defer tx.Rollback() //nolint:errcheck
@@ -235,11 +193,10 @@ func (s *postgresBuilderSuite) TestDropIfExists() {
 	s.Run("when all parameters are valid, should drop table successfully", func() {
 		err = builder.Create(s.ctx, tx, "users", func(table *schema.Blueprint) {
 			table.ID()
-			table.String("name", 255)
-			table.String("email", 255).Unique()
-			table.String("password", 255).Nullable()
-			table.Timestamp("created_at").Default("CURRENT_TIMESTAMP")
-			table.Timestamp("updated_at").Default("CURRENT_TIMESTAMP")
+			table.String("name")
+			table.String("email").Unique()
+			table.String("password").Nullable()
+			table.Timestamps()
 		})
 		s.NoError(err, "expected no error when creating table before dropping it")
 		err = builder.DropIfExists(s.ctx, tx, "users")
@@ -252,8 +209,7 @@ func (s *postgresBuilderSuite) TestDropIfExists() {
 }
 
 func (s *postgresBuilderSuite) TestRename() {
-	builder, err := schema.NewBuilder("postgres")
-	s.Require().NoError(err)
+	builder := s.builder
 	tx, err := s.db.BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
 	defer tx.Rollback() //nolint:errcheck
@@ -287,8 +243,7 @@ func (s *postgresBuilderSuite) TestRename() {
 }
 
 func (s *postgresBuilderSuite) TestTable() {
-	builder, err := schema.NewBuilder("postgres")
-	s.Require().NoError(err)
+	builder := s.builder
 	tx, err := s.db.BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
 	defer tx.Rollback() //nolint:errcheck
@@ -312,8 +267,7 @@ func (s *postgresBuilderSuite) TestTable() {
 			table.String("email", 255).Unique("uk_users_email")
 			table.String("password", 255).Nullable()
 			table.Text("bio").Nullable()
-			table.Timestamp("created_at").Default("CURRENT_TIMESTAMP")
-			table.Timestamp("updated_at").Default("CURRENT_TIMESTAMP")
+			table.Timestamps()
 
 			table.FullText("bio")
 		})
@@ -359,7 +313,7 @@ func (s *postgresBuilderSuite) TestTable() {
 		})
 		s.Run("should drop unique constraint", func() {
 			err = builder.Table(s.ctx, tx, "users", func(table *schema.Blueprint) {
-				table.DropUnique("uk_users_email")
+				table.DropUnique([]string{"email"})
 			})
 			s.NoError(err, "expected no error when dropping unique constraint from table")
 		})
@@ -397,8 +351,7 @@ func (s *postgresBuilderSuite) TestTable() {
 }
 
 func (s *postgresBuilderSuite) TestGetColumns() {
-	builder, err := schema.NewBuilder("postgres")
-	s.Require().NoError(err)
+	builder := s.builder
 	tx, err := s.db.BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
 	defer tx.Rollback() //nolint:errcheck
@@ -417,8 +370,7 @@ func (s *postgresBuilderSuite) TestGetColumns() {
 			table.String("name", 255)
 			table.String("email", 255).Unique()
 			table.String("password", 255).Nullable()
-			table.Timestamp("created_at").Default("CURRENT_TIMESTAMP")
-			table.Timestamp("updated_at").Default("CURRENT_TIMESTAMP")
+			table.Timestamps()
 		})
 		s.NoError(err, "expected no error when creating table before getting columns")
 
@@ -434,8 +386,7 @@ func (s *postgresBuilderSuite) TestGetColumns() {
 }
 
 func (s *postgresBuilderSuite) TestGetIndexes() {
-	builder, err := schema.NewBuilder("postgres")
-	s.Require().NoError(err)
+	builder := s.builder
 	tx, err := s.db.BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
 	defer tx.Rollback() //nolint:errcheck
@@ -454,8 +405,7 @@ func (s *postgresBuilderSuite) TestGetIndexes() {
 			table.String("name", 255)
 			table.String("email", 255).Unique()
 			table.String("password", 255).Nullable()
-			table.Timestamp("created_at").Default("CURRENT_TIMESTAMP")
-			table.Timestamp("updated_at").Default("CURRENT_TIMESTAMP")
+			table.Timestamps()
 
 			table.Index("name").Name("idx_users_name")
 		})
@@ -474,8 +424,7 @@ func (s *postgresBuilderSuite) TestGetIndexes() {
 }
 
 func (s *postgresBuilderSuite) TestGetTables() {
-	builder, err := schema.NewBuilder("postgres")
-	s.Require().NoError(err)
+	builder := s.builder
 	tx, err := s.db.BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
 	defer tx.Rollback() //nolint:errcheck
@@ -490,8 +439,7 @@ func (s *postgresBuilderSuite) TestGetTables() {
 			table.String("name", 255)
 			table.String("email", 255).Unique()
 			table.String("password", 255).Nullable()
-			table.Timestamp("created_at").Default("CURRENT_TIMESTAMP")
-			table.Timestamp("updated_at").Default("CURRENT_TIMESTAMP")
+			table.Timestamps()
 		})
 		s.NoError(err, "expected no error when creating table before getting tables")
 
@@ -506,8 +454,7 @@ func (s *postgresBuilderSuite) TestGetTables() {
 }
 
 func (s *postgresBuilderSuite) TestHasColumn() {
-	builder, err := schema.NewBuilder("postgres")
-	s.Require().NoError(err)
+	builder := s.builder
 	tx, err := s.db.BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
 	defer tx.Rollback() //nolint:errcheck
@@ -528,8 +475,7 @@ func (s *postgresBuilderSuite) TestHasColumn() {
 			table.String("name", 255)
 			table.String("email", 255).Unique()
 			table.String("password", 255).Nullable()
-			table.Timestamp("created_at").Default("CURRENT_TIMESTAMP")
-			table.Timestamp("updated_at").Default("CURRENT_TIMESTAMP")
+			table.Timestamps()
 		})
 		s.NoError(err, "expected no error when creating table before checking column existence")
 
@@ -544,8 +490,7 @@ func (s *postgresBuilderSuite) TestHasColumn() {
 }
 
 func (s *postgresBuilderSuite) TestHasColumns() {
-	builder, err := schema.NewBuilder("postgres")
-	s.Require().NoError(err)
+	builder := s.builder
 	tx, err := s.db.BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
 	defer tx.Rollback() //nolint:errcheck
@@ -566,8 +511,7 @@ func (s *postgresBuilderSuite) TestHasColumns() {
 			table.String("name", 255)
 			table.String("email", 255).Unique()
 			table.String("password", 255).Nullable()
-			table.Timestamp("created_at").Default("CURRENT_TIMESTAMP")
-			table.Timestamp("updated_at").Default("CURRENT_TIMESTAMP")
+			table.Timestamps()
 		})
 		s.NoError(err, "expected no error when creating table before checking column existence")
 
@@ -582,8 +526,7 @@ func (s *postgresBuilderSuite) TestHasColumns() {
 }
 
 func (s *postgresBuilderSuite) TestHasIndex() {
-	builder, err := schema.NewBuilder("postgres")
-	s.Require().NoError(err)
+	builder := s.builder
 	tx, err := s.db.BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
 	defer tx.Rollback() //nolint:errcheck
@@ -605,7 +548,7 @@ func (s *postgresBuilderSuite) TestHasIndex() {
 			table.Integer("user_id")
 			table.String("order_id", 255)
 			table.Decimal("amount", 10, 2)
-			table.Timestamp("created_at").Default("CURRENT_TIMESTAMP")
+			table.Timestamp("created_at").UseCurrent()
 
 			table.Index("company_id", "user_id")
 			table.Unique("order_id").Name("uk_orders_order_id")
@@ -627,8 +570,7 @@ func (s *postgresBuilderSuite) TestHasIndex() {
 }
 
 func (s *postgresBuilderSuite) TestHasTable() {
-	builder, err := schema.NewBuilder("postgres")
-	s.Require().NoError(err)
+	builder := s.builder
 	tx, err := s.db.BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
 	defer tx.Rollback() //nolint:errcheck
@@ -649,8 +591,7 @@ func (s *postgresBuilderSuite) TestHasTable() {
 			table.String("name", 255)
 			table.String("email", 255).Unique()
 			table.String("password", 255).Nullable()
-			table.Timestamp("created_at").Default("CURRENT_TIMESTAMP")
-			table.Timestamp("updated_at").Default("CURRENT_TIMESTAMP")
+			table.Timestamps()
 		})
 		s.NoError(err, "expected no error when creating table before checking existence")
 
@@ -671,8 +612,7 @@ func (s *postgresBuilderSuite) TestHasTable() {
 			table.String("name", 255)
 			table.String("email", 255).Unique()
 			table.String("password", 255).Nullable()
-			table.Timestamp("created_at").Default("CURRENT_TIMESTAMP")
-			table.Timestamp("updated_at").Default("CURRENT_TIMESTAMP")
+			table.Timestamps()
 		})
 		s.NoError(err, "expected no error when creating table with custom schema")
 

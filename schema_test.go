@@ -35,16 +35,10 @@ func (s *schemaTestSuite) SetupSuite() {
 	s.Require().NoError(err)
 
 	s.db = db
-	schema.SetDebug(false)
 
 	s.Run("when dialect is not set should return error", func() {
-		err := schema.SetDialect("")
-		s.Error(err)
-		s.ErrorContains(err, "unknown dialect")
-
 		builderFuncs := []func() error{
 			func() error { return schema.Create(ctx, nil, "", nil) },
-			func() error { return schema.CreateIfNotExists(ctx, nil, "", nil) },
 			func() error { return schema.Drop(ctx, nil, "") },
 			func() error { return schema.DropIfExists(ctx, nil, "") },
 			func() error { _, err := schema.GetColumns(ctx, nil, ""); return err },
@@ -61,10 +55,7 @@ func (s *schemaTestSuite) SetupSuite() {
 			s.Error(fn(), "Expected error when dialect is not set")
 		}
 	})
-	s.Run("when dialect is set to postgres should not return error", func() {
-		err = schema.SetDialect("postgres")
-		s.Require().NoError(err)
-	})
+	schema.SetDialect("postgres")
 }
 
 func (s *schemaTestSuite) TearDownSuite() {
@@ -99,67 +90,19 @@ func (s *schemaTestSuite) TestCreate() {
 			table.ID()
 		})
 		s.Error(err)
-		s.ErrorContains(err, "table name is empty")
+		s.ErrorContains(err, "invalid arguments")
 	})
 	s.Run("when blueprint function is nil should return error", func() {
 		err := schema.Create(s.ctx, tx, "test", nil)
 		s.Error(err)
-		s.ErrorContains(err, "blueprint function is nil")
+		s.ErrorContains(err, "invalid arguments")
 	})
 	s.Run("when transaction is nil should return error", func() {
 		err := schema.Create(s.ctx, nil, "test", func(table *schema.Blueprint) {
 			table.ID()
 		})
 		s.Error(err)
-		s.ErrorContains(err, "transaction is nil")
-	})
-}
-
-func (s *schemaTestSuite) TestCreateIfNotExists() {
-	tx, err := s.db.BeginTx(s.ctx, nil)
-	s.Require().NoError(err)
-	defer tx.Rollback() //nolint:errcheck
-
-	s.Run("when parameters are valid should create table", func() {
-		err := schema.CreateIfNotExists(s.ctx, tx, "users", func(table *schema.Blueprint) {
-			table.ID()
-			table.String("name")
-			table.String("email").Unique()
-			table.String("password")
-			table.Timestamp("created_at").UseCurrent()
-			table.Timestamp("updated_at").UseCurrent()
-		})
-		s.NoError(err)
-	})
-	s.Run("when table already exists should return no error", func() {
-		err := schema.CreateIfNotExists(s.ctx, tx, "users", func(table *schema.Blueprint) {
-			table.ID()
-			table.String("name")
-			table.String("email")
-			table.String("password")
-			table.Timestamp("created_at").UseCurrent()
-			table.Timestamp("updated_at").UseCurrent()
-		})
-		s.NoError(err)
-	})
-	s.Run("when table name is empty should return error", func() {
-		err := schema.CreateIfNotExists(s.ctx, tx, "", func(table *schema.Blueprint) {
-			table.ID()
-		})
-		s.Error(err)
-		s.ErrorContains(err, "table name is empty")
-	})
-	s.Run("when blueprint function is nil should return error", func() {
-		err := schema.CreateIfNotExists(s.ctx, tx, "test", nil)
-		s.Error(err)
-		s.ErrorContains(err, "blueprint function is nil")
-	})
-	s.Run("when transaction is nil should return error", func() {
-		err := schema.CreateIfNotExists(s.ctx, nil, "test", func(table *schema.Blueprint) {
-			table.ID()
-		})
-		s.Error(err)
-		s.ErrorContains(err, "transaction is nil")
+		s.ErrorContains(err, "invalid arguments")
 	})
 }
 
@@ -188,12 +131,12 @@ func (s *schemaTestSuite) TestDrop() {
 	s.Run("when table name is empty should return error", func() {
 		err := schema.Drop(s.ctx, tx, "")
 		s.Error(err)
-		s.ErrorContains(err, "table name is empty")
+		s.ErrorContains(err, "invalid arguments")
 	})
 	s.Run("when transaction is nil should return error", func() {
 		err := schema.Drop(s.ctx, nil, "test")
 		s.Error(err)
-		s.ErrorContains(err, "transaction is nil")
+		s.ErrorContains(err, "invalid arguments")
 	})
 }
 
@@ -222,12 +165,12 @@ func (s *schemaTestSuite) TestDropIfExists() {
 	s.Run("when table name is empty should return error", func() {
 		err := schema.DropIfExists(s.ctx, tx, "")
 		s.Error(err)
-		s.ErrorContains(err, "table name is empty")
+		s.ErrorContains(err, "invalid arguments")
 	})
 	s.Run("when transaction is nil should return error", func() {
 		err := schema.DropIfExists(s.ctx, nil, "test")
 		s.Error(err)
-		s.ErrorContains(err, "transaction is nil")
+		s.ErrorContains(err, "invalid arguments")
 	})
 }
 
